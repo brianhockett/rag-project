@@ -1,0 +1,6 @@
+project_plan.pdf
+data/MovieSummaries/movie.metadata.tsv
+data/MovieSummaries/plot_summaries.txt
+data/MovieSummaries/README.txt
+data/movies.duckdb
+__pycache__/
