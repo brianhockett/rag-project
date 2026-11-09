@@ -1,3 +1,13 @@
+sentence-transformers==6.2.0
+snowballstemmer==3.1.1
+transformers==5.21.1
+torchvision==0.29.2
 duckdb-cli==2.0.0
+faiss-cpu==1.15.1
+rank-bm25==0.2.2
+pyarrow==26.0.1
+pillow==13.0.0
 duckdb==2.0.0
 pandas==3.1.1
+torch==2.15.0
+numpy==2.5.4
