@@ -18,6 +18,13 @@ We are building a retrieval-augmented generation (RAG) system that answers quest
   - answer-quality scoring;
   - a failure analysis.
 
+**Proposal:** `DS4221 Project Proposal.pdf` in the repo root is the proposal we submitted. Read it before planning work on retrieval, evaluation or the schema, and check that the work still delivers what it promised:
+- three kinds of question: plot details ("In Jaws, how do they kill the shark?"), naming a movie from its plot ("What is the space movie where the empire fights against the rebels?") and listing movies on a topic ("What are some movies about time travel?");
+- an evaluation on 25+ questions of our own with known source summaries, reporting recall@k and MRR, comparing chunk sizes and Flat against IVF search, and scoring answers with an LLM judge plus spot checks;
+- the four tables `documents`, `chunks`, `embeddings` and `eval_questions`.
+
+The schema has grown since the proposal (for example `genres`, `languages`, `version` and `chunks.config`), so treat `ingest.py` as the current schema and the proposal as the original plan. If a change would drop something the proposal promised, say so before making it.
+
 **Grading:**
 
 | Part | Weight |
@@ -38,6 +45,95 @@ We are building a retrieval-augmented generation (RAG) system that answers quest
 | Thu Dec 3 | Workshop |
 | Mon Dec 7, 11:59 pm | Final report |
 | Tue Dec 8 | Presentation |
+
+## Current plan and status
+
+This section is the team's working plan, and every Claude session should follow it. Update it whenever a stage lands or a decision changes. `project_plan.pdf` is a one-page copy of the same plan; if the two disagree, this section wins.
+
+### Status (Mon Nov 9)
+
+Ingestion is done. Nothing after it has been started.
+
+| File | What it does | Status |
+|---|---|---|
+| `unzip.py` | Extracts `plot_summaries.txt`, `movie.metadata.tsv` and `README.txt` from `data/MovieSummaries.tar.gz` | Done |
+| `ingest.py` | Cleans the text and loads 42,204 movies into `documents` (102 dropped: 99 with no metadata, 3 empty after cleaning). Creates all four tables, and loads `data/eval_questions.jsonl` if it exists. | Done |
+| `build_index.py` | Chunks, embeds, fills `chunks` and `embeddings`, and builds the FAISS and BM25 indexes | Empty file |
+| `movie_rag.py` | `Retriever`, `build_prompt()` and `answer()`: Lab 10's `micro_rag.py` for our corpus | Empty file |
+| `ask.py` | Command line: a question in, a cited answer out | Empty file |
+| `measure_*.py` | Metrics, comparisons, timing and the LLM judge | Not created |
+| `data/eval_questions.jsonl` | Our 25+ evaluation questions | Not written |
+
+In `movies.duckdb`, `documents` has 42,204 rows and the other three tables are empty. `requirements.txt` has only `duckdb`, `duckdb-cli` and `pandas`; add FAISS, `sentence-transformers`, `torch` and `rank_bm25` when the code that imports them is written. Brian's machine has an RTX 4070 laptop GPU (8 GB), so embedding runs on the GPU.
+
+### How the files connect
+
+```
+data/MovieSummaries.tar.gz            (committed to git)
+        │  unzip.py
+        ▼
+data/MovieSummaries/plot_summaries.txt, movie.metadata.tsv
+        │  ingest.py  ◄── data/eval_questions.jsonl
+        ▼
+data/movies.duckdb   documents · chunks · embeddings · eval_questions
+        │  build_index.py   chunk → embed → fill chunks + embeddings → build indexes
+        ▼
+FAISS + BM25 index files in data/, each saved with its chunk_id order
+        │  movie_rag.py     Retriever, build_prompt(), answer()
+        ▼
+ask.py         question in → answer citing [doc_id]
+measure_*.py   metrics over eval_questions
+```
+
+Every script after `ingest.py` reads from `movies.duckdb`, never from the raw files. Retrieval returns chunk IDs, and joining `chunks` to `documents` gives each hit the `doc_id` and title that the answer cites. `build_index.py` (for chunks) and `movie_rag.py` (for questions) must share one `tokenize()` and one way of loading the embedding model.
+
+### Retrieval design
+
+- **Chunking** (our own code, no LangChain): two configs stored side by side in `chunks`, told apart by `chunks.config`:
+  - `full`: one chunk per summary;
+  - `tok256`: 256-token windows with 32 tokens of overlap, based on Lab 9's `chunk_text()`.
+
+  `chunk_id` is `doc_id:version:config:ordinal`, for example `74830:v1:tok256:3`.
+- **Embedding:** `google/embeddinggemma-2`, 768 dimensions, through `sentence-transformers`, loaded the way Lab 9's `embedding_demo.py` does it. Each chunk is embedded as `title: <title> | text: <chunk text>` because summaries rarely name their own movie; questions use the model's query prompt. Vectors are unit length, so inner product equals cosine. They're stored in `embeddings.vector`, so the indexes can be rebuilt without re-embedding.
+- **Vector index:** FAISS `IndexIVFFlat` with inner product is the product, and `IndexFlatIP` is the exact baseline the spec requires. Set `nlist` to about 4√N, and pick `nprobe` from a sweep of ANN recall@10 (against the exact top 10) against latency. Save both indexes to `data/` with the mapping from FAISS ids back to `chunk_id`.
+- **Keyword search** (our one stretch goal, target Nov 23): `rank_bm25`'s `BM25Okapi` over each chunk's text plus its genres. The tokenizer lowercases, strips accents, splits on `[a-z0-9]+`, drops stopwords (Lab 10's `STOPWORDS` plus question words such as "movie" and "film") and Snowball-stems. Pickle the index to `data/` with the `chunk_id`s in BM25 order.
+- **Fusion:** reciprocal rank fusion over the vector and BM25 rankings, score = Σ 1/(60 + rank). Keep vector-only and BM25-only modes for the comparison. Vector-only is the fallback if hybrid isn't ready.
+- **Generation:** Lab 10's prompt shape: `Answer using ONLY the sources below. Cite as [doc_id].`, then one `[doc_id] Title: text` line per chunk, then the question. `answer()` posts to `LLM_BASE_URL` like the lab's does, and echoes the prompt when it isn't set. Frameworks are allowed in this step only.
+- **Metrics** are document-level: dedupe the retrieved chunks to `doc_id`s before computing recall@k and MRR@10.
+
+### How we follow the labs
+
+The pipeline has the same stages and function boundaries as Lab 10's `micro_rag.py`. The differences are where the data lives, the embedding model and the index library.
+
+| Stage | Labs | Ours |
+|---|---|---|
+| Corpus | `corpus.py`: Python lists | `unzip.py` + `ingest.py` → DuckDB tables |
+| Chunk | `chunk_corpus()`: groups of ~60 words | `full` and `tok256` configs |
+| Embed | hashed word counts, 2048 dimensions | EmbeddingGemma 2, 768 dimensions |
+| Index | microvector `BruteForceIndex` / `IVFIndex`, rebuilt in memory on every run | FAISS `IndexFlatIP` / `IndexIVFFlat` (`n_clusters` → `nlist`, `probe` → `nprobe`), built once by `build_index.py` and saved to disk |
+| Retrieve | `Retriever.retrieve()` | same class and return shape, plus BM25 and RRF |
+| Prompt and answer | `build_prompt()`, `answer()` | reused almost unchanged |
+| Command line and metrics | `ask.py`, `measure_rag.py` | `ask.py`, `measure_*.py` |
+
+`build_index.py` is the only new piece. The lab embeds every chunk each time it starts, which works for 24 documents but not for 42k summaries and a neural model.
+
+### Work left, by deadline
+
+| By | Work |
+|---|---|
+| Thu Nov 12 | `build_index.py` (chunk, embed, Flat and IVF indexes), the vector-only `Retriever`, `build_prompt()`, `answer()` and `ask.py`. Show 5 example queries with their retrieved chunks. |
+| Thu Nov 19 | `data/eval_questions.jsonl`: at least 25 questions, about 9 each, written by people who read the summaries (the spec requires human-written questions). Send 10 to the partner team with their `doc_id`s and corpus access. |
+| Mon Nov 23 | BM25 index and RRF fusion |
+| Thu Dec 3 | `measure_*.py`: recall@1/5/10 and MRR@10; vector vs. BM25 vs. hybrid, `full` vs. `tok256`, and Flat vs. IVF; the `nprobe` sweep, build times and queries per second; the LLM judge with hand checks. Run the partner team's questions. |
+| Dec 7–8 | README with the full run order, the 6–8 page report with failure analysis, and the live demo |
+
+### Settled decisions
+
+Don't reopen these or flag them as problems:
+- **The `embeddings` primary key is `chunk_id` alone.** Every embedding uses the same model, so `model` is recorded but isn't part of the key, as in our proposal. The spec's table shows `(chunk_id, model)`, so the report should say why we differ.
+- **`data/MovieSummaries.tar.gz` stays committed**, so a fresh clone can reproduce everything without a download. The extracted files, `movies.duckdb` and the index files stay gitignored.
+- **The layout is flat and lab-style:** the scripts above sit in the repo root, with no packages and no Makefile. The README lists the scripts in run order.
+- **BM25 uses `rank_bm25`**, which the professor approved. Don't hand-roll it.
 
 ## Formatting rules
 
