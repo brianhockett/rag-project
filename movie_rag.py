@@ -2,17 +2,19 @@
 
 This is Lab 10's micro_rag.py for our corpus. build_index.py imports
 load_model(), embed_documents() and tokenize() from here, so chunks are
-embedded and tokenized exactly the way questions are. ask.py and
-measure_retrieval.py use Retriever, build_prompt() and answer().
+embedded and tokenized exactly the way questions are. ask.py uses Retriever
+and answer(); the measure_*.py scripts use Retriever, build_prompt() and
+chat(), which also serves the LLM judge.
 
 Reads what build_index.py wrote:
-    data/movies.duckdb              chunks and documents tables
-    data/<config>_flat.faiss        exact index (IndexFlatIP), the baseline
-    data/<config>_ivf.faiss         IVF index (IndexIVFFlat), the product
-    data/<config>_chunk_ids.json    chunk_id of each FAISS id and BM25 row, in order
-    data/<config>_bm25.pkl          BM25 index over the same chunks
+    data/movies.duckdb      chunks and documents tables
+    data/flat.faiss         exact index (IndexFlatIP), the baseline
+    data/ivf.faiss          IVF index (IndexIVFFlat), the product
+    data/chunk_ids.json     chunk_id of each FAISS id and BM25 row, in order
+    data/bm25.pkl           BM25 index over the same chunks
 
-and writes nothing.
+and writes nothing. Answers come from the OpenAI-compatible endpoint named by
+LLM_BASE_URL, LLM_API_KEY and LLM_MODEL, as in Lab 10.
 
 Import it rather than running it:
     from movie_rag import Retriever, answer
@@ -23,6 +25,7 @@ from sentence_transformers import SentenceTransformer
 from pathlib import Path
 import snowballstemmer
 import urllib.request
+import urllib.error
 import numpy as np
 import unicodedata
 import functools
@@ -34,9 +37,12 @@ import json
 import os
 import re
 
-# Data paths
+# Data paths: the database, and the index files build_index.py writes and Retriever reads.
 DATA = Path(__file__).parent / "data"
 DB_PATH = DATA / "movies.duckdb"
+INDEX_PATHS = {"flat": DATA / "flat.faiss", "ivf": DATA / "ivf.faiss"}
+CHUNK_IDS_PATH = DATA / "chunk_ids.json"
+BM25_PATH = DATA / "bm25.pkl"
 
 # Embedding model: EmbeddingGemma 2, text only, loaded the way Lab 9's embedding_demo.py does.
 MODEL_ID = "google/embeddinggemma-2"
@@ -45,9 +51,14 @@ CONTEXT_TOKENS = 8192
 QUERY_PROMPT = "SearchQuery"                    # the model's "task: search result | query: " prefix
 
 # Retrieval settings
-NPROBE = 8                                      # IVF lists searched per query; the nprobe sweep picks this
+TOP_K = 5                                       # chunks the LLM gets per question, and the k in recall@k
+NPROBE = 64                                     # IVF lists searched per query, of 1,201; measure_speed.py's sweep: ANN recall@5 0.91
 N_CANDIDATES = 50                               # chunks each search hands to fusion
 RRF_K = 60                                      # reciprocal rank fusion: score = sum of 1 / (RRF_K + rank)
+
+# Generation settings
+TEMPERATURE = 0                                 # no sampling, so reruns give the same answer for the evaluation
+LLM_TIMEOUT = 60                                # seconds to wait for the endpoint, as in Lab 10
 
 # BM25 tokenizer: Lab 10's STOPWORDS, plus words that most movie questions share.
 STOPWORDS = set("""a an and are as at be because by can each for from has have
@@ -128,7 +139,7 @@ def stem(word):
     """Return the Snowball stem of a lowercase word.
 
     The cache matters: the corpus reuses a small vocabulary, and stemming
-    each of its 13 million words afresh took 6-7 minutes per chunk config.
+    each of its 13 million words afresh took 6-7 minutes.
     Example: "killing" -> "kill"
     """
     return STEMMER.stemWord(word)
@@ -156,25 +167,28 @@ def tokenize(text):
 
 # Class to search the indexes build_index.py saved
 class Retriever:
-    """Loads one chunk config's indexes once, then answers top-k searches by vector, keyword or both."""
+    """Loads the indexes once, then answers top-k searches by vector, keyword or both."""
 
-    def __init__(self, config = "tok256", index = "ivf", model = None):
+    def __init__(self, index = "ivf", model = None):
         """Load the FAISS index, the chunk_id list, the BM25 index and the model.
 
-        config is "full" or "tok256"; index is "ivf" (the product) or "flat"
-        (the exact baseline). Pass model to share one loaded model between
-        several Retrievers.
+        index is "ivf" (the product) or "flat" (the exact baseline). Pass model
+        to share one loaded model between several Retrievers.
         """
-        self.config = config
         self.index_type = index
 
+        # Without the index files there is nothing to search yet.
+        missing = [path.name for path in [INDEX_PATHS[index], CHUNK_IDS_PATH, BM25_PATH] if not path.exists()]
+        if missing:
+            raise SystemExit(f"No {', '.join(missing)} in data/; run build_index.py first")
+
         # FAISS ids are positions; chunk_ids[i] is the chunk behind FAISS id i and BM25 row i.
-        self.index = faiss.read_index(str(DATA / f"{config}_{index}.faiss"))
+        self.index = faiss.read_index(str(INDEX_PATHS[index]))
         if index == "ivf":
             self.index.nprobe = NPROBE
-        with open(DATA / f"{config}_chunk_ids.json", encoding = "utf-8") as f:
+        with open(CHUNK_IDS_PATH, encoding = "utf-8") as f:
             self.chunk_ids = json.load(f)
-        with open(DATA / f"{config}_bm25.pkl", "rb") as f:
+        with open(BM25_PATH, "rb") as f:
             self.bm25 = pickle.load(f)
         self.model = model or load_model()
         self.con = duckdb.connect(DB_PATH, read_only = True)
@@ -183,7 +197,7 @@ class Retriever:
         n_known = self.con.execute("SELECT count(*) FROM chunks WHERE chunk_id IN (SELECT unnest(?))",
                                    [self.chunk_ids]).fetchone()[0]
         if not (self.index.ntotal == len(self.chunk_ids) == n_known):
-            raise SystemExit(f"The {config} index files don't match {DB_PATH.name}; run build_index.py again")
+            raise SystemExit(f"The index files don't match {DB_PATH.name}; run build_index.py again")
 
 
     def vector_search(self, question, n):
@@ -216,7 +230,7 @@ class Retriever:
         return sorted(fused.items(), key = lambda item: (-item[1], item[0]))[:n]
 
 
-    def retrieve(self, question, k = 5, mode = "hybrid"):
+    def retrieve(self, question, k = TOP_K, mode = "hybrid"):
         """Return the k best chunks for the question as dicts, best first.
 
         mode is "vector", "keyword" or "hybrid". Each dict has chunk_id, doc_id,
@@ -246,30 +260,82 @@ def build_prompt(question, retrieved):
     apart, such as the four Titanics.
     """
     sources = "\n".join(f"[{c['doc_id']}] {c['title']} ({c['year'] or 'no date'}): {c['text']}" for c in retrieved)
-    return f"Answer using ONLY the sources below. Cite as [doc_id].\n\n{sources}\n\nQuestion: {question}"
+    return f"Answer using ONLY the sources below. Cite as [doc_id].\n\n{sources}\n\nQuestion: {question} \n\nIf the provided sources are insufficient to answer, say \"The provided sources do not contain enough information to answer the question.\""
 
 
-# Function to answer a question
-def answer(question, retriever, k = 5, mode = "hybrid"):
-    """Retrieve, build the prompt and generate, as in Lab 10.
+# Function to send one prompt to the LLM
+def chat(prompt):
+    """Send the prompt to the OpenAI-compatible endpoint as one user message; return the reply text.
 
-    Without LLM_BASE_URL this runs in echo mode and returns the prompt, so you
-    see exactly what retrieval chose. With it, the prompt goes to the course's
-    OpenAI-compatible endpoint (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL).
+    The endpoint is LLM_BASE_URL, with LLM_API_KEY and LLM_MODEL, as in Lab 10.
+    Every failure raises RuntimeError with a one-line reason: no endpoint set,
+    a refused connection, a timeout, an HTTP error (401 for a bad key, 404 for
+    a wrong URL) or a reply with no answer in it. answer() falls back to echo
+    mode on it; the LLM judge should stop instead.
+    Example: chat("Reply with one word: hi") -> "Hi"
     """
-    retrieved = retriever.retrieve(question, k, mode)
-    prompt = build_prompt(question, retrieved)
     base = os.environ.get("LLM_BASE_URL")
     if not base:
-        cited = ", ".join(str(c["doc_id"]) for c in retrieved)
-        return f"{prompt}\n\n[echo mode: no LLM configured. A real model would answer from: {cited}]"
+        raise RuntimeError("LLM_BASE_URL is not set")
+    url = base.rstrip("/") + "/chat/completions"
 
-    # Real mode: one chat completion request.
+    # Lab 10's request, plus a fixed temperature.
     request = urllib.request.Request(
-        base.rstrip("/") + "/chat/completions",
+        url,
         headers = {"Authorization": f"Bearer {os.environ.get('LLM_API_KEY', '')}",
                    "Content-Type": "application/json"},
         data = json.dumps({"model": os.environ.get("LLM_MODEL", ""),
-                           "messages": [{"role": "user", "content": prompt}]}).encode())
-    with urllib.request.urlopen(request, timeout = 60) as response:
-        return json.load(response)["choices"][0]["message"]["content"]
+                           "messages": [{"role": "user", "content": prompt}],
+                           "temperature": TEMPERATURE}).encode())
+
+    # HTTP errors carry the server's own explanation in the body, so show the start of it.
+    try:
+        with urllib.request.urlopen(request, timeout = LLM_TIMEOUT) as response:
+            reply = json.load(response)
+    except urllib.error.HTTPError as e:
+        detail = " ".join(e.read().decode("utf-8", errors = "replace").split())[:200]
+        raise RuntimeError(f"{url} returned HTTP {e.code}: {detail}") from e
+    except (OSError, ValueError) as e:      # refused, unreachable, timed out, or not JSON
+        raise RuntimeError(f"no usable reply from {url}: {getattr(e, 'reason', e)}") from e
+
+    # The answer is the first choice's message; anything else usually means a wrong URL or model.
+    try:
+        return reply["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError, AttributeError) as e:
+        raise RuntimeError(f"{url} replied without an answer: {str(reply)[:200]}") from e
+
+
+# Function to list the movies behind an answer
+def format_sources(retrieved):
+    """Return the retrieved movies, best first, one per line, so a citation like [74830] can be read.
+
+    A movie with several retrieved chunks is listed once.
+    Example: "Sources:\\n  [1173339]  Jaws 3-D (1983)\\n  [74830]    Jaws (1975)"
+    """
+    movies = {}
+    for c in retrieved:
+        movies.setdefault(c["doc_id"], f"{c['title']} ({c['year'] or 'no date'})")
+    return "Sources:\n" + "\n".join(f"  {f'[{doc_id}]':<10} {movie}" for doc_id, movie in movies.items())
+
+
+# Function to answer a question
+def answer(question, retriever, k = TOP_K, mode = "hybrid"):
+    """Retrieve, build the prompt and generate, as in Lab 10; return the text to print.
+
+    Without LLM_BASE_URL this runs in echo mode and returns the prompt, so you
+    see exactly what retrieval chose. With it, the reply comes back followed by
+    the retrieved movies (format_sources). If the endpoint fails, the prompt
+    comes back with the reason instead, so a live demo keeps going.
+    """
+    retrieved = retriever.retrieve(question, k, mode)
+    prompt = build_prompt(question, retrieved)
+    if not os.environ.get("LLM_BASE_URL"):
+        cited = ", ".join(str(c["doc_id"]) for c in retrieved)
+        return f"{prompt}\n\n[echo mode: no LLM configured. A real model would answer from: {cited}]"
+
+    # Real mode. A failed request shows the prompt rather than stopping ask.py.
+    try:
+        reply = chat(prompt)
+    except RuntimeError as e:
+        return f"{prompt}\n\n[LLM request failed, so this is the prompt instead. {e}]"
+    return f"{reply}\n\n{format_sources(retrieved)}"

@@ -4,3 +4,12 @@ data/MovieSummaries/plot_summaries.txt
 data/MovieSummaries/README.txt
 data/movies.duckdb
 __pycache__/
+data/movies.duckdb.wal
+data/*.faiss
+data/chunk_ids.json
+data/bm25.pkl
+data/build_times.json
+data/retrieval_results.csv
+data/retrieval_by_question.csv
+data/nprobe_sweep.csv
+data/query_speed.csv

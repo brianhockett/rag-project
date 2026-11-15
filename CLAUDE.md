@@ -23,7 +23,7 @@ We are building a retrieval-augmented generation (RAG) system that answers quest
 - an evaluation on 25+ questions of our own with known source summaries, reporting recall@k and MRR, comparing chunk sizes and Flat against IVF search, and scoring answers with an LLM judge plus spot checks;
 - the four tables `documents`, `chunks`, `embeddings` and `eval_questions`.
 
-The schema has grown since the proposal (for example `genres`, `languages`, `version` and `chunks.config`), so treat `ingest.py` as the current schema and the proposal as the original plan. If a change would drop something the proposal promised, say so before making it.
+The schema has grown since the proposal (for example `genres`, `languages` and `version`), so treat `ingest.py` as the current schema and the proposal as the original plan. If a change would drop something the proposal promised, say so before making it.
 
 **Grading:**
 
@@ -50,25 +50,27 @@ The schema has grown since the proposal (for example `genres`, `languages`, `ver
 
 This section is the team's working plan, and every Claude session should follow it. Update it whenever a stage lands or a decision changes. `project_plan.pdf` is a one-page copy of the same plan; if the two disagree, this section wins.
 
-### Status (Mon Nov 9)
+### Status (Sun Nov 15)
 
-Ingestion is done. The rest of the pipeline through `ask.py`, keyword search included, is written and was tested end to end on a 500-movie copy of the database, but `build_index.py` hasn't been run on the full corpus yet.
+Ingestion is done. On Nov 15 we dropped the chunk-size comparison, so the code now has one chunking: windows of at most 256 tokens. Brian rebuilt everything with it on Nov 15 (90,207 chunks), and the three evaluation scripts ran on that build, except `measure_answers.py`, which waits on an LLM endpoint. Generation is written and tested against a fake endpoint, but no real LLM endpoint has been configured yet.
 
 | File | What it does | Status |
 |---|---|---|
 | `unzip.py` | Extracts `plot_summaries.txt`, `movie.metadata.tsv` and `README.txt` from `data/MovieSummaries.tar.gz` | Done |
 | `ingest.py` | Cleans the text and loads 42,204 movies into `documents` (102 dropped: 99 with no metadata, 3 empty after cleaning). Creates all four tables, and loads `data/eval_questions.jsonl` if it exists. | Done |
-| `build_index.py` | Chunks, embeds, fills `chunks` and `embeddings`, and builds the FAISS and BM25 indexes | Written and tested on 500 movies; not yet run on the full corpus |
-| `movie_rag.py` | The model, `tokenize()`, `Retriever` (vector, BM25 and hybrid search), `build_prompt()` and `answer()`: Lab 10's `micro_rag.py` for our corpus | Written and tested on 500 movies |
-| `ask.py` | Command line: a question in, a cited answer out. With no question it keeps asking, for the demo. | Written and tested on 500 movies |
-| `measure_*.py` | Metrics, comparisons, timing and the LLM judge | Not created |
-| `data/eval_questions.jsonl` | Our 25+ evaluation questions | Not written |
+| `build_index.py` | Chunks, embeds, fills `chunks` and `embeddings`, and builds the FAISS and BM25 indexes | Built Nov 15 with one chunking and a hard 256-token cap: 90,207 chunks in 28.6 min. Each run appends its step times, CPU threads, and GPU name and memory to `data/build_times.json`. |
+| `movie_rag.py` | The model, `tokenize()`, `Retriever` (vector, BM25 and hybrid search), `build_prompt()`, `chat()` and `answer()`: Lab 10's `micro_rag.py` for our corpus | Retrieval worked on the Nov 9 full-corpus build; `chat()` tested against a fake endpoint only |
+| `ask.py` | Command line: a question in, a cited answer out. With no question it keeps asking, for the demo. | Worked on the Nov 9 build; waits on the rebuild, then on an LLM endpoint for real answers |
+| `measure_retrieval.py` | Recall@5 and MRR for five runs (vector-Flat, vector-IVF, BM25, hybrid-Flat, hybrid-IVF), ours and the partner team's side by side; writes `data/retrieval_results.csv` and `data/retrieval_by_question.csv` | Ran Nov 15 at `nprobe` 64: hybrid-Flat found 20 of 25; vector-Flat and BM25 19; vector-IVF and hybrid-IVF 18. At `nprobe` 8, vector-IVF found 16. |
+| `measure_speed.py` | `nprobe` sweep (ANN recall@5 against Flat, and query time) and queries per second per search run; writes `data/nprobe_sweep.csv` and `data/query_speed.csv` | Ran Nov 15: ANN recall@5 is 0.63 at `nprobe` 8 and 0.91 at 64 (1.5 ms, against Flat's 9.8 ms); `NPROBE` set to 64 |
+| `measure_answers.py` | Runs the real system on every question; writes `data/answers.csv` for the team to grade, and won't overwrite it | Written Nov 15 and tested against a fake endpoint; waits on the LLM endpoint |
+| `data/eval_questions.jsonl` | Our 25+ evaluation questions | Written Nov 15: 25 questions (Aidan 9, Brian 9, Vinith 7), all doc IDs checked |
 
-In `movies.duckdb`, `documents` has 42,204 rows and the other three tables are empty until `build_index.py` runs. Brian's machine has an RTX 4070 laptop GPU (8 GB), so embedding runs on the GPU.
+`ingest.py` recreates `movies.duckdb` with 42,204 rows in `documents` and the 25 questions in `eval_questions`; `build_index.py` then fills `chunks` and `embeddings`. A database from before Nov 15 still has a `config` column in `chunks`, and `build_index.py` stops with a message instead of using it. Brian's machine has an RTX 4070 laptop GPU (8 GB), so embedding runs on the GPU.
 
 **Measured in the 500-movie test and on the full corpus's text**, for planning:
-- **Full build time:** about 45 minutes, estimated from measured rates: bfloat16 embedding at 70 chunks/s for `tok256` and 32/s for whole summaries. Chunking all 42,204 summaries into `tok256` gives 90,187 chunks and takes about 2 minutes.
-- **BM25 on the full corpus:** a 57 MB (`full`) or 77 MB (`tok256`) pickle that loads in about 2.5 s. A query takes 120–200 ms, because `rank_bm25` scores every chunk in Python.
+- **Full build time:** 28.6 minutes on Nov 15 (`data/build_times.json`): chunking 94 s, embedding 26 min at 57 chunks/s, IVF training 19 s, BM25 16 s. Embedding measured 70 chunks/s on its own; a test running alongside slowed it, so a clean rebuild should take about 25 minutes.
+- **BM25 on the full corpus:** a 51 MB pickle that loads in about 2.5 s. A query takes 120–200 ms, because `rank_bm25` scores every chunk in Python.
 - **`ask.py` timing:** about 15 s before the first answer (imports take ~13 s, loading the model and indexes ~7 s), then about 0.1 s per question plus the LLM's time. Use the keep-asking mode for the demo.
 - **Opening the database:** while the DuckDB CLI has `movies.duckdb` open in read-write mode, no other process can open it, even read-only. Close the CLI or start it with `duckdb -readonly`.
 
@@ -85,7 +87,7 @@ data/movies.duckdb   documents · chunks · embeddings · eval_questions
         │  build_index.py   chunk → embed → fill chunks + embeddings → build indexes
         ▼
 FAISS + BM25 index files in data/, each saved with its chunk_id order
-        │  movie_rag.py     Retriever, build_prompt(), answer()
+        │  movie_rag.py     Retriever, build_prompt(), chat(), answer()
         ▼
 ask.py         question in → answer citing [doc_id]
 measure_*.py   metrics over eval_questions
@@ -95,23 +97,20 @@ Every script after `ingest.py` reads from `movies.duckdb`, never from the raw fi
 
 ### Retrieval design
 
-- **Chunking** (our own code, no LangChain): two configs stored side by side in `chunks`, told apart by `chunks.config`:
-  - `full`: one chunk per summary;
-  - `tok256`: 256-token windows with 32 tokens of overlap, based on Lab 9's `chunk_text()`.
-
-  `chunk_id` is `doc_id:version:config:ordinal`, for example `74830:v1:tok256:3`.
-- **Embedding:** `google/embeddinggemma-2`, 768 dimensions, through `sentence-transformers`, loaded the way Lab 9's `embedding_demo.py` does it. Each chunk is embedded as `title: <title> | text: <chunk text>` because summaries rarely name their own movie; questions use the model's `SearchQuery` prompt. On an NVIDIA GPU the model runs in bfloat16, which is 2–3× faster than float32 and gives vectors that match float32's to a mean cosine of 0.9999; elsewhere it runs in float32. Vectors are re-normalized to unit length in float32, so inner product equals cosine. They're stored in `embeddings.vector`, so the indexes can be rebuilt without re-embedding. `build_index.py` embeds the longest chunks first, with GPU batch sizes by length (`EMBED_BATCHES`), and saves every 2,048 chunks, so a re-run after a crash resumes where it stopped.
-- **Vector index:** FAISS `IndexIVFFlat` with inner product is the product, and `IndexFlatIP` is the exact baseline the spec requires. `nlist` is about 4√N, capped so each list gets at least 39 training vectors. Pick `nprobe` (`NPROBE` in `movie_rag.py`, 8 for now) from a sweep of ANN recall@10 (against the exact top 10) against latency.
-- **Index files**, per config (`full` or `tok256`), all in `data/`:
-  - `<config>_flat.faiss` and `<config>_ivf.faiss`: the two FAISS indexes;
-  - `<config>_chunk_ids.json`: the `chunk_id` of each FAISS id and BM25 row, in `chunk_id` order (FAISS id `i` is `chunk_ids[i]`);
-  - `<config>_bm25.pkl`: the BM25 index.
+- **Chunking** (our own code, no LangChain): one chunking for the whole corpus, windows of at most 256 of the embedding model's tokens with 32 tokens of overlap, based on Lab 9's `chunk_text()`. Decoding a window and encoding it again can add a token or two where the window cuts a word, so a window whose text comes to more than 256 tokens is shortened until it fits. `chunk_id` is `doc_id:version:tok256:ordinal`, for example `74830:v1:tok256:3`. The spec asks for the chunking configuration in every `chunk_id`, so `tok256` (`CHUNKING` in `build_index.py`) stays there, and must change if the window or overlap changes.
+- **Embedding:** `google/embeddinggemma-2`, 768 dimensions, through `sentence-transformers`, loaded the way Lab 9's `embedding_demo.py` does it. Each chunk is embedded as `title: <title> | text: <chunk text>` because summaries rarely name their own movie; questions use the model's `SearchQuery` prompt. On an NVIDIA GPU the model runs in bfloat16, which is 2–3× faster than float32 and gives vectors that match float32's to a mean cosine of 0.9999; elsewhere it runs in float32. Vectors are re-normalized to unit length in float32, so inner product equals cosine. They're stored in `embeddings.vector`, so the indexes can be rebuilt without re-embedding. `build_index.py` embeds the longest chunks first, in GPU batches of 64 (`EMBED_BATCH`), and saves every 2,048 chunks, so a re-run after a crash resumes where it stopped.
+- **Vector index:** FAISS `IndexIVFFlat` with inner product is the product, and `IndexFlatIP` is the exact baseline the spec requires. `nlist` is about 4√N, capped so each list gets at least 39 training vectors. `NPROBE` in `movie_rag.py` is 64, chosen Nov 15 from `measure_speed.py`'s sweep of ANN recall@5 (against the exact top 5) against latency. The full index has 1,201 lists: 8 gave only 0.63, 64 gives 0.91 at 1.5 ms per search (Flat: 9.8 ms), and 128 adds 0.03 for twice the time.
+- **Index files**, all in `data/` (paths in `movie_rag.py`'s `INDEX_PATHS`, `CHUNK_IDS_PATH` and `BM25_PATH`):
+  - `flat.faiss` and `ivf.faiss`: the two FAISS indexes;
+  - `chunk_ids.json`: the `chunk_id` of each FAISS id and BM25 row, in `chunk_id` order (FAISS id `i` is `chunk_ids[i]`);
+  - `bm25.pkl`: the BM25 index.
 
   `Retriever` checks on load that these match the `chunks` table, and stops with a message if they don't.
 - **Keyword search** (our one stretch goal): `rank_bm25`'s `BM25Okapi` over each chunk's title, text and genres. The title is included because a question like "In Jaws, …" can't otherwise match on "Jaws". The tokenizer lowercases, strips accents, splits on `[a-z0-9]+`, drops stopwords (Lab 10's `STOPWORDS` plus question words such as "movie" and "film") and Snowball-stems, with a cache on the stemmer, which made tokenizing the corpus about 30 times faster.
 - **Fusion:** reciprocal rank fusion over each search's top 50, score = Σ 1/(60 + rank). `Retriever.retrieve(question, k, mode)` takes `mode` = `"vector"`, `"keyword"` or `"hybrid"` (the default), so the comparison can run each one. Vector-only is the fallback.
-- **Generation:** Lab 10's prompt shape: `Answer using ONLY the sources below. Cite as [doc_id].`, then one `[doc_id] Title (year): text` line per chunk, then the question. The year tells remakes apart, such as the four Titanics. `answer()` posts to `LLM_BASE_URL` like the lab's does, and echoes the prompt when it isn't set. Frameworks are allowed in this step only.
-- **Metrics** are document-level: dedupe the retrieved chunks to `doc_id`s before computing recall@k and MRR@10.
+- **Generation:** Lab 10's prompt shape: `Answer using ONLY the sources below. Cite as [doc_id].`, then one `[doc_id] Title (year): text` line per chunk, then the question. The year tells remakes apart, such as the four Titanics. `chat(prompt)` makes Lab 10's request: one user message posted to `LLM_BASE_URL/chat/completions` with the standard library, plus `temperature` 0 so evaluation runs repeat. Any failure raises `RuntimeError` with a one-line reason. `answer()` calls `chat()` and adds the list of retrieved movies, so citations like `[74830]` can be read. It echoes the prompt when `LLM_BASE_URL` isn't set or the request fails, so the demo keeps going. The spec allows LangChain or LlamaIndex in this step only; the labs use neither, and neither do we.
+- **Metrics** are document-level, with one k everywhere: `TOP_K` = 5 in `movie_rag.py`, the number of chunks the LLM gets. Retrieve those 5 chunks, dedupe them to `doc_id`s in rank order, and compute recall@5 and MRR over those movies. The `nprobe` sweep's ANN recall uses the same k. Questions whose `q_id` starts with `p` are the partner team's and are reported separately.
+- **Answer quality** is graded by people, not an LLM judge. `measure_answers.py` runs the real system (hybrid, IVF, `TOP_K` chunks, as in `ask.py`) on every question and writes a CSV with the question, correct and retrieved movies, recall@5, reciprocal rank, the LLM's answer, and two blank columns, a 1–10 score and an explanation, for the team to fill in. The failure analysis is written from that sheet.
 
 ### How we follow the labs
 
@@ -120,7 +119,7 @@ The pipeline has the same stages and function boundaries as Lab 10's `micro_rag.
 | Stage | Labs | Ours |
 |---|---|---|
 | Corpus | `corpus.py`: Python lists | `unzip.py` + `ingest.py` → DuckDB tables |
-| Chunk | `chunk_corpus()`: groups of ~60 words | `full` and `tok256` configs |
+| Chunk | `chunk_corpus()`: groups of ~60 words | Windows of at most 256 tokens, 32 overlapping |
 | Embed | hashed word counts, 2048 dimensions | EmbeddingGemma 2, 768 dimensions |
 | Index | microvector `BruteForceIndex` / `IVFIndex`, rebuilt in memory on every run | FAISS `IndexFlatIP` / `IndexIVFFlat` (`n_clusters` → `nlist`, `probe` → `nprobe`), built once by `build_index.py` and saved to disk |
 | Retrieve | `Retriever.retrieve()` | same class and return shape, plus BM25 and RRF |
@@ -136,16 +135,18 @@ The pipeline has the same stages and function boundaries as Lab 10's `micro_rag.
 | Thu Nov 12 | Run `build_index.py` on the full corpus (about 45 minutes), then show 5 example queries with their retrieved chunks from `ask.py`. |
 | Thu Nov 19 | `data/eval_questions.jsonl`: at least 25 questions, about 9 each, written by people who read the summaries (the spec requires human-written questions). Send 10 to the partner team with their `doc_id`s and corpus access. |
 | Mon Nov 23 | BM25 and RRF fusion are written; check them on the full corpus with the team's questions |
-| Thu Dec 3 | `measure_*.py`: recall@1/5/10 and MRR@10; vector vs. BM25 vs. hybrid, `full` vs. `tok256`, and Flat vs. IVF; the `nprobe` sweep, build times and queries per second; the LLM judge with hand checks. Run the partner team's questions. |
+| Thu Dec 3 | `measure_retrieval.py` on our and the partner team's questions; `measure_speed.py` (the `nprobe` sweep and queries per second; build times come from `data/build_times.json`); `measure_answers.py` and the team's grading of its sheet. |
 | Dec 7–8 | README with the full run order, the 6–8 page report with failure analysis, and the live demo |
 
 ### Settled decisions
 
 Don't reopen these or flag them as problems:
 - **The `embeddings` primary key is `chunk_id` alone.** Every embedding uses the same model, so `model` is recorded but isn't part of the key, as in our proposal. The spec's table shows `(chunk_id, model)`, so the report should say why we differ.
-- **`data/MovieSummaries.tar.gz` stays committed**, so a fresh clone can reproduce everything without a download. The extracted files, `movies.duckdb` and the index files stay gitignored.
+- **`data/MovieSummaries.tar.gz` stays committed**, so a fresh clone can reproduce everything without a download. The extracted files, `movies.duckdb`, the index files and the measurement results (`build_times.json` and the `measure_*.py` CSVs) stay gitignored. `data/answers.csv` doesn't, because it holds the team's grades.
 - **The layout is flat and lab-style:** the scripts above sit in the repo root, with no packages and no Makefile. The README lists the scripts in run order.
 - **BM25 uses `rank_bm25`**, which the professor approved. Don't hand-roll it.
+- **One chunking, windows of at most 256 tokens** (decided Nov 15). The proposal's chunk-size comparison is dropped; the comparisons are Flat vs. IVF and vector vs. BM25 vs. hybrid. The report should say why 256 tokens and that the plan changed.
+- **One k, no LLM judge** (decided Nov 15). Recall and MRR are reported at k = 5 only (`TOP_K`), with no comparison across k values. Answer quality is human-graded (1–10 plus an explanation), which the spec allows as a "graded rubric"; the proposal's LLM judge is dropped.
 
 ## Formatting rules
 

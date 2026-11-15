@@ -65,16 +65,15 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
-    chunk_id  VARCHAR PRIMARY KEY,                       -- doc_id:version:config:ordinal, e.g. 74830:v1:tok256:3, PK for the chunk
+    chunk_id  VARCHAR PRIMARY KEY,                       -- doc_id:version:chunking:ordinal, e.g. 74830:v1:tok256:3, PK for the chunk
     doc_id    BIGINT NOT NULL REFERENCES documents (doc_id), -- FK to the document this chunk belongs to
-    config    VARCHAR NOT NULL,                          -- Chunk size: 'full' (whole summary) or 'tok<N>' (N-token windows), e.g. 'tok256'
     ordinal   INTEGER NOT NULL,                          -- Chunk number within the document, starting at 0
     text      VARCHAR NOT NULL,                          -- The chunk text, trimmed of whitespace
-    n_tokens  INTEGER                                    -- Number of tokens in this chunk, computed by build_index.py
+    n_tokens  INTEGER                                    -- Number of tokens in this chunk (at most 256), computed by build_index.py
 );
 
 CREATE TABLE IF NOT EXISTS embeddings (
-    chunk_id  VARCHAR PRIMARY KEY REFERENCES chunks (chunk_id), -- doc_id:version:config:ordinal, PK, and FK to the chunk this embedding belongs to
+    chunk_id  VARCHAR PRIMARY KEY REFERENCES chunks (chunk_id), -- doc_id:version:chunking:ordinal, PK, and FK to the chunk this embedding belongs to
     model     VARCHAR NOT NULL,                          -- e.g. google/embeddinggemma-2
     dim       INTEGER NOT NULL,                          -- Number of dimensions in the vector: 768 for EmbeddingGemma 2
     vector    FLOAT[768] NOT NULL                        -- embedding of "title: <documents.title> | text: <chunks.text>", unit length

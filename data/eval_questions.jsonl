@@ -1,0 +1,27 @@
+# Evaluation questions, one JSON object per line. Each was written by its author after reading the summaries
+# behind relevant_doc_ids. Load with: python ingest.py
+{"q_id": "a1", "question": "What movie is this: a young man from a foreign place travels to an uncharted land, falls in love with a native of the tribe, and rebels against his homeland.", "relevant_doc_ids": [4273140, 399433], "author": "Aidan"}
+{"q_id": "a2", "question": "In the Matrix, what does the black cat symbolize/represent in the story?", "relevant_doc_ids": [30007], "author": "Aidan"}
+{"q_id": "a3", "question": "What movie involves a group of Northern U.S. children exploring a series of caves looking for buried treasure?", "relevant_doc_ids": [89631], "author": "Aidan"}
+{"q_id": "a4", "question": "What movie involves dinosaurs escaping containment in a theme park on a remote island?", "relevant_doc_ids": [68485], "author": "Aidan"}
+{"q_id": "a5", "question": "In Inception, is Cobb in the real world at the end of the movie?", "relevant_doc_ids": [23270459], "author": "Aidan"}
+{"q_id": "a6", "question": "Summarize the plot of Titanic (1997) to me in your own words.", "relevant_doc_ids": [52371], "author": "Aidan"}
+{"q_id": "a7", "question": "What movie involves a string of murders themed after the seven deadly sins?", "relevant_doc_ids": [206818], "author": "Aidan"}
+{"q_id": "a8", "question": "How does Luke Skywalker blow up the death star?", "relevant_doc_ids": [52549], "author": "Aidan"}
+{"q_id": "a9", "question": "Who is Darth Vader in A New Hope?", "relevant_doc_ids": [52549], "author": "Aidan"}
+{"q_id": "b1", "question": "How were the dinosaurs brought back to life in Jurassic Park?", "relevant_doc_ids": [68485], "author": "Brian"}
+{"q_id": "b2", "question": "How did Anakin Skywalker turn into Darth Vader?", "relevant_doc_ids": [55447], "author": "Brian"}
+{"q_id": "b3", "question": "Why is spice so important in Dune?", "relevant_doc_ids": [71415], "author": "Brian"}
+{"q_id": "b4", "question": "What is the name of the town where Lightning McQueen gets stuck?", "relevant_doc_ids": [920613], "author": "Brian"}
+{"q_id": "b5", "question": "What is the name of the movie with the undercover cop and mobster in Boston?", "relevant_doc_ids": [1349086], "author": "Brian"}
+{"q_id": "b6", "question": "Why does Snape kill Dumbledore?", "relevant_doc_ids": [858575, 31941988], "author": "Brian"}
+{"q_id": "b7", "question": "How did Oskar Schindler save Jewish people from the concentration camps?", "relevant_doc_ids": [65834], "author": "Brian"}
+{"q_id": "b8", "question": "What is the name of the movie where a hockey player becomes a professional golfer to win a bunch of money?", "relevant_doc_ids": [400797], "author": "Brian"}
+{"q_id": "b9", "question": "What shocking twist happens at the end of the original Planet of the Apes?", "relevant_doc_ids": [18618306], "author": "Brian"}
+{"q_id": "v1", "question": "In The Lorax, how does Ted convince the people of Thneedville to turn against O’Hare?", "relevant_doc_ids": [28063569], "author": "Vinith"}
+{"q_id": "v2", "question": "In The Lorax, what product does the Once-ler make from the Truffula trees, and what happens to the forest?", "relevant_doc_ids": [28063569], "author": "Vinith"}
+{"q_id": "v3", "question": "What movie is about an arcade game bad guy who sneaks into other games because he wants to be seen as a good guy?", "relevant_doc_ids": [32071439], "author": "Vinith"}
+{"q_id": "v4", "question": "What movie follows a young reporter who buys a model ship and discovers it holds a clue to a sunken treasure?", "relevant_doc_ids": [11400848], "author": "Vinith"}
+{"q_id": "v5", "question": "In The Adventures of Tintin, who is Sakharine revealed to be, and how is he finally defeated?", "relevant_doc_ids": [11400848], "author": "Vinith"}
+{"q_id": "v6", "question": "In FernGully: The Last Rainforest, what is threatening the rainforest, and how do the fairies stop it?", "relevant_doc_ids": [2108776], "author": "Vinith"}
+{"q_id": "v7", "question": "In Zathura, who is the stranded astronaut revealed to be?", "relevant_doc_ids": [3626050], "author": "Vinith"}

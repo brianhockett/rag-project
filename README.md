@@ -14,9 +14,12 @@ source .venv-rag/bin/activate
 pip install -r requirements.txt
 python unzip.py         # extract the corpus from data/MovieSummaries.tar.gz
 python ingest.py        # load it into data/movies.duckdb
-python build_index.py   # chunk, embed and index: roughly 45 min on a laptop GPU; resumes if stopped
+python build_index.py   # chunk, embed and index: roughly 25 min on a laptop GPU; resumes if stopped
 python ask.py "In Jaws, how do they kill the shark?"
 python ask.py           # keeps asking and loads the model only once: use this for the demo
+python measure_retrieval.py   # recall@5 and MRR for each search mode -> data/retrieval_results.csv
+python measure_speed.py       # nprobe sweep and queries per second -> data/nprobe_sweep.csv, data/query_speed.csv
+python measure_answers.py     # needs the LLM: answers for the team to grade -> data/answers.csv
 ```
 
-Every script is safe to re-run. Without `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` set, `ask.py` prints the prompt it would send instead of an answer. Close the DuckDB CLI first, or open it with `duckdb -readonly`, because scripts can't open the database while the CLI holds it.
+Every script is safe to re-run. Set `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` to get answers from any OpenAI-compatible endpoint: the course's, or a local model server such as Ollama (`http://localhost:11434/v1`). Without them, or if the endpoint fails, `ask.py` prints the prompt it would send instead. Close the DuckDB CLI first, or open it with `duckdb -readonly`, because scripts can't open the database while the CLI holds it.
