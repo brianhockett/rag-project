@@ -13,3 +13,5 @@ data/retrieval_results.csv
 data/retrieval_by_question.csv
 data/nprobe_sweep.csv
 data/query_speed.csv
+.env
+app.py

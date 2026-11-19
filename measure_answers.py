@@ -15,9 +15,9 @@ answer a score from 1 to 10 and explain it; the failure analysis is written
 from the low scores. Questions whose q_id starts with "p" are the partner
 team's.
 
-Needs LLM_BASE_URL, LLM_API_KEY and LLM_MODEL. Won't overwrite answers.csv,
-because by then it may hold the team's grades: rename or delete it to make a
-new one.
+Needs LLM_BASE_URL, LLM_API_KEY and LLM_MODEL, in .env or the shell. Won't
+overwrite answers.csv, because by then it may hold the team's grades: rename
+or delete it to make a new one.
 
 Run after build_index.py:
     python measure_answers.py
@@ -55,7 +55,7 @@ def main():
         raise SystemExit(f"{ANSWERS_CSV.name} already exists and may hold the team's grades; "
                          f"rename or delete it to make a new one")
     if not os.environ.get("LLM_BASE_URL"):
-        raise SystemExit("Set LLM_BASE_URL, LLM_API_KEY and LLM_MODEL first: answers need the LLM")
+        raise SystemExit("Put LLM_BASE_URL, LLM_API_KEY and LLM_MODEL in .env first (copy .env.example): answers need the LLM")
 
     # The questions, and the titles of their correct movies.
     con = duckdb.connect(DB_PATH, read_only = True)

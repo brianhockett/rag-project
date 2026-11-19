@@ -4,7 +4,7 @@ This is Lab 10's micro_rag.py for our corpus. build_index.py imports
 load_model(), embed_documents() and tokenize() from here, so chunks are
 embedded and tokenized exactly the way questions are. ask.py uses Retriever
 and answer(); the measure_*.py scripts use Retriever, build_prompt() and
-chat(), which also serves the LLM judge.
+chat().
 
 Reads what build_index.py wrote:
     data/movies.duckdb      chunks and documents tables
@@ -14,7 +14,9 @@ Reads what build_index.py wrote:
     data/bm25.pkl           BM25 index over the same chunks
 
 and writes nothing. Answers come from the OpenAI-compatible endpoint named by
-LLM_BASE_URL, LLM_API_KEY and LLM_MODEL, as in Lab 10.
+LLM_BASE_URL, LLM_API_KEY and LLM_MODEL, as in Lab 10. Importing this module
+loads them from .env in the repo root (gitignored; copy .env.example to make
+it), unless the shell already set them.
 
 Import it rather than running it:
     from movie_rag import Retriever, answer
@@ -22,6 +24,7 @@ Import it rather than running it:
 
 # Imports
 from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
 from pathlib import Path
 import snowballstemmer
 import urllib.request
@@ -44,6 +47,11 @@ INDEX_PATHS = {"flat": DATA / "flat.faiss", "ivf": DATA / "ivf.faiss"}
 CHUNK_IDS_PATH = DATA / "chunk_ids.json"
 BM25_PATH = DATA / "bm25.pkl"
 
+# LLM settings: .env in the repo root (gitignored) holds LLM_BASE_URL, LLM_API_KEY and LLM_MODEL.
+# load_dotenv() copies them into the environment, but never over a value the shell already set.
+ENV_PATH = Path(__file__).parent / ".env"
+load_dotenv(ENV_PATH)
+
 # Embedding model: EmbeddingGemma 2, text only, loaded the way Lab 9's embedding_demo.py does.
 MODEL_ID = "google/embeddinggemma-2"
 DIM = 768
@@ -58,6 +66,7 @@ RRF_K = 60                                      # reciprocal rank fusion: score 
 
 # Generation settings
 TEMPERATURE = 0                                 # no sampling, so reruns give the same answer for the evaluation
+ENABLE_THINKING = False                         # no reasoning trace before the answer: faster, and our questions don't need one
 LLM_TIMEOUT = 60                                # seconds to wait for the endpoint, as in Lab 10
 
 # BM25 tokenizer: Lab 10's STOPWORDS, plus words that most movie questions share.
@@ -260,7 +269,7 @@ def build_prompt(question, retrieved):
     apart, such as the four Titanics.
     """
     sources = "\n".join(f"[{c['doc_id']}] {c['title']} ({c['year'] or 'no date'}): {c['text']}" for c in retrieved)
-    return f"Answer using ONLY the sources below. Cite as [doc_id].\n\n{sources}\n\nQuestion: {question} \n\nIf the provided sources are insufficient to answer, say \"The provided sources do not contain enough information to answer the question.\""
+    return f"Answer using ONLY the sources below. Cite as [doc_id].\n\n{sources}\n\nQuestion: {question} \n\nIf you are not confident in your answer, say \"I am not confident in my answer.\n My best guess is: (your answer)\""
 
 
 # Function to send one prompt to the LLM
@@ -271,7 +280,7 @@ def chat(prompt):
     Every failure raises RuntimeError with a one-line reason: no endpoint set,
     a refused connection, a timeout, an HTTP error (401 for a bad key, 404 for
     a wrong URL) or a reply with no answer in it. answer() falls back to echo
-    mode on it; the LLM judge should stop instead.
+    mode on it; measure_answers.py stops instead.
     Example: chat("Reply with one word: hi") -> "Hi"
     """
     base = os.environ.get("LLM_BASE_URL")
@@ -279,14 +288,16 @@ def chat(prompt):
         raise RuntimeError("LLM_BASE_URL is not set")
     url = base.rstrip("/") + "/chat/completions"
 
-    # Lab 10's request, plus a fixed temperature.
+    # Lab 10's request, plus a fixed temperature and the model's reasoning ("thinking") switched off.
+    # chat_template_kwargs is how NVIDIA's Nemotron models take that switch.
     request = urllib.request.Request(
         url,
         headers = {"Authorization": f"Bearer {os.environ.get('LLM_API_KEY', '')}",
                    "Content-Type": "application/json"},
         data = json.dumps({"model": os.environ.get("LLM_MODEL", ""),
                            "messages": [{"role": "user", "content": prompt}],
-                           "temperature": TEMPERATURE}).encode())
+                           "temperature": TEMPERATURE,
+                           "chat_template_kwargs": {"enable_thinking": ENABLE_THINKING}}).encode())
 
     # HTTP errors carry the server's own explanation in the body, so show the start of it.
     try:

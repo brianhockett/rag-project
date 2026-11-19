@@ -12,6 +12,7 @@ With Python 3.13, from the repo root:
 python3 -m venv .venv-rag
 source .venv-rag/bin/activate
 pip install -r requirements.txt
+cp .env.example .env    # then put your own LLM API key in .env (git ignores it)
 python unzip.py         # extract the corpus from data/MovieSummaries.tar.gz
 python ingest.py        # load it into data/movies.duckdb
 python build_index.py   # chunk, embed and index: roughly 25 min on a laptop GPU; resumes if stopped
@@ -22,4 +23,4 @@ python measure_speed.py       # nprobe sweep and queries per second -> data/npro
 python measure_answers.py     # needs the LLM: answers for the team to grade -> data/answers.csv
 ```
 
-Every script is safe to re-run. Set `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` to get answers from any OpenAI-compatible endpoint: the course's, or a local model server such as Ollama (`http://localhost:11434/v1`). Without them, or if the endpoint fails, `ask.py` prints the prompt it would send instead. Close the DuckDB CLI first, or open it with `duckdb -readonly`, because scripts can't open the database while the CLI holds it.
+Every script is safe to re-run. `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` in `.env` choose the LLM. Any OpenAI-compatible endpoint works: NVIDIA's API as in `.env.example`, the course's, or a local model server such as Ollama (`http://localhost:11434/v1`). A variable set in the shell overrides `.env`. Without them, or if the endpoint fails, `ask.py` prints the prompt it would send instead. Close the DuckDB CLI first, or open it with `duckdb -readonly`, because scripts can't open the database while the CLI holds it.
