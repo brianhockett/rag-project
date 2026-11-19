@@ -269,7 +269,7 @@ def build_prompt(question, retrieved):
     apart, such as the four Titanics.
     """
     sources = "\n".join(f"[{c['doc_id']}] {c['title']} ({c['year'] or 'no date'}): {c['text']}" for c in retrieved)
-    return f"Answer using ONLY the sources below. Cite as [doc_id].\n\n{sources}\n\nQuestion: {question} \n\nIf you are not confident in your answer, say \"I am not confident in my answer.\n My best guess is: (your answer)\""
+    return f"Answer using ONLY the sources below. Do not answer based on information not included in the sources. Cite as [doc_id].\n\n{sources}\n\nQuestion: {question} \n\nAnswer:"
 
 
 # Function to send one prompt to the LLM
